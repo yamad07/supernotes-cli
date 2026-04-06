@@ -1,0 +1,22 @@
+[project]
+name = "supernotes-cli"
+version = "0.1.0"
+description = "CLI and MCP server for Supernotes cards"
+readme = "README.md"
+authors = [
+    { name = "yamad07", email = "yamad07@hey.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8.3.1",
+    "httpx>=0.28.1",
+    "mcp[cli]>=1.26.0",
+    "pydantic>=2.12.5",
+]
+
+[project.scripts]
+supernotes = "supernotes_cli.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
