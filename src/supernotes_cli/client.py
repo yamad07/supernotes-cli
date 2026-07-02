@@ -134,7 +134,7 @@ class SupernotesClient:
         if not patch:
             raise ValueError("No fields to update")
 
-        resp = await self._client.patch("/v1/cards", json={card_id: patch})
+        resp = await self._client.patch("/v1/cards", json={card_id: {"data": patch}})
         resp.raise_for_status()
         return self._extract_card_from_multi_status(resp.json(), card_id)
 
@@ -147,12 +147,31 @@ class SupernotesClient:
         resp.raise_for_status()
         return self._extract_card_from_multi_status(resp.json(), card_id)
 
+    async def _move_cards_to_junk(self, card_ids: list[str]) -> None:
+        """Move cards to Junk before delete/remove.
+
+        Supernotes requires a card membership to be disabled (status -2) before
+        the card can be removed or permanently deleted. The /v1/cards PATCH
+        endpoint expects each patch to be split into top-level "data" and/or
+        "membership" sections.
+        """
+        if not card_ids:
+            return
+
+        resp = await self._client.patch(
+            "/v1/cards",
+            json={card_id: {"membership": {"status": -2}} for card_id in card_ids},
+        )
+        resp.raise_for_status()
+
     async def delete_cards(self, card_ids: list[str]) -> dict[str, int]:
+        await self._move_cards_to_junk(card_ids)
         resp = await self._client.post("/v1/cards/delete", json=card_ids)
         resp.raise_for_status()
         return resp.json()
 
     async def remove_cards(self, card_ids: list[str]) -> dict[str, int]:
+        await self._move_cards_to_junk(card_ids)
         resp = await self._client.post("/v1/cards/remove", json=card_ids)
         resp.raise_for_status()
         return resp.json()
