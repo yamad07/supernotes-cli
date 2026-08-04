@@ -19,24 +19,51 @@ def _get_client() -> SupernotesClient:
 
 
 @click.group()
-@click.option("--json-output", "json_out", is_flag=True, help="Output as JSON")
+@click.option("--json-output", "json_out", is_flag=True, help="Output as JSON (shorthand for --format json)")
+@click.option("--format", "fmt", default=None, type=click.Choice(["text", "json", "short", "ids"]),
+              help="Output format: text (default), json, short (one line per card), ids (IDs only)")
 @click.pass_context
-def main(ctx, json_out: bool):
+def main(ctx, json_out: bool, fmt: str | None):
     """Supernotes CLI - Manage your cards from the command line."""
     ctx.ensure_object(dict)
-    ctx.obj["json"] = json_out
+    if fmt:
+        ctx.obj["format"] = fmt
+    elif json_out:
+        ctx.obj["format"] = "json"
+    else:
+        ctx.obj["format"] = "text"
+
+
+def _format_short(card) -> str:
+    """One-line format: ID | name | [tags]"""
+    parts = [card.data.id, card.data.name]
+    if card.data.tags:
+        parts.append(f"[{', '.join(card.data.tags)}]")
+    return " | ".join(parts)
 
 
 def _output(ctx, card):
-    if ctx.obj.get("json"):
+    fmt = ctx.obj["format"]
+    if fmt == "json":
         click.echo(json.dumps(card.model_dump(), indent=2, default=str))
+    elif fmt == "short":
+        click.echo(_format_short(card))
+    elif fmt == "ids":
+        click.echo(card.data.id)
     else:
         click.echo(card.format_text())
 
 
 def _output_list(ctx, cards):
-    if ctx.obj.get("json"):
+    fmt = ctx.obj["format"]
+    if fmt == "json":
         click.echo(json.dumps([c.model_dump() for c in cards], indent=2, default=str))
+    elif fmt == "short":
+        for card in cards:
+            click.echo(_format_short(card))
+    elif fmt == "ids":
+        for card in cards:
+            click.echo(card.data.id)
     else:
         for i, card in enumerate(cards):
             if i > 0:
@@ -70,6 +97,31 @@ def search(ctx, query: str | None, limit: int, parent: str | None, visibility: s
         async with _get_client() as client:
             return await client.search_cards(query=query, limit=limit, parent_id=parent, visibility=vis_value)
     _output_list(ctx, _run(_do()))
+
+
+@main.command()
+@click.pass_context
+def collections(ctx):
+    """List your collections."""
+    async def _do():
+        async with _get_client() as client:
+            return await client.get_collections()
+
+    items = _run(_do())
+    fmt = ctx.obj["format"]
+    if fmt == "json":
+        click.echo(json.dumps([c.model_dump() for c in items], indent=2, default=str))
+    elif fmt == "short":
+        for c in items:
+            click.echo(f"{c.id} | {c.name}")
+    elif fmt == "ids":
+        for c in items:
+            click.echo(c.id)
+    else:
+        for i, c in enumerate(items):
+            if i > 0:
+                click.echo("---")
+            click.echo(c.format_text())
 
 
 @main.command()
@@ -117,6 +169,42 @@ def update(ctx, card_id: str, name: str | None, markup: str | None, tags: str | 
 
 @main.command()
 @click.argument("card_id")
+@click.argument("new_parent")
+@click.option("--from", "old_parent", default=None, help="Old parent ID to remove")
+@click.pass_context
+def move(ctx, card_id: str, new_parent: str, old_parent: str | None):
+    """Move a card to a new parent."""
+    async def _do():
+        async with _get_client() as client:
+            return await client.move_card(card_id, new_parent, old_parent)
+
+    result = _run(_do())
+    if ctx.obj["format"] == "json":
+        click.echo(json.dumps(result, indent=2, default=str))
+    else:
+        click.echo(f"Moved {card_id} -> {new_parent}")
+
+
+@main.command("set-visibility")
+@click.argument("card_id")
+@click.argument("visibility", type=click.Choice(["priority", "visible", "invisible"]))
+@click.pass_context
+def set_visibility(ctx, card_id: str, visibility: str):
+    """Set card visibility."""
+    vis_map = {"priority": 1, "visible": 0, "invisible": -1}
+    async def _do():
+        async with _get_client() as client:
+            return await client.set_visibility(card_id, vis_map[visibility])
+
+    result = _run(_do())
+    if ctx.obj["format"] == "json":
+        click.echo(json.dumps(result, indent=2, default=str))
+    else:
+        click.echo(f"Set {card_id} visibility to {visibility}")
+
+
+@main.command()
+@click.argument("card_id")
 @click.argument("content")
 @click.pass_context
 def append(ctx, card_id: str, content: str):
@@ -124,6 +212,31 @@ def append(ctx, card_id: str, content: str):
     async def _do():
         async with _get_client() as client:
             return await client.append_to_card(card_id, content)
+    _output(ctx, _run(_do()))
+
+
+@main.command()
+@click.argument("content")
+@click.option("--style", "-s", default=None, type=click.Choice(["plain", "bullet", "todo"]),
+              help="Append format (default: your Supernotes preference)")
+@click.option("--date", "-d", "local_date", default=None, help="Daily card date YYYY-MM-DD (default: today)")
+@click.option("--tags", "-t", default=None, help="Comma-separated tags (applied if the daily card is created)")
+@click.option("--parent", "-p", default=None, help="Parent card ID (applied if the daily card is created)")
+@click.pass_context
+def daily(ctx, content: str, style: str | None, local_date: str | None, tags: str | None, parent: str | None):
+    """Append content to today's daily card (created if it doesn't exist)."""
+    from datetime import date
+
+    tag_list = [t.strip() for t in tags.split(",")] if tags else None
+    if local_date is None:
+        local_date = date.today().isoformat()
+
+    async def _do():
+        async with _get_client() as client:
+            return await client.daily_append(
+                markup=content, format=style, local_date=local_date,
+                tags=tag_list, parent_id=parent,
+            )
     _output(ctx, _run(_do()))
 
 
@@ -137,7 +250,7 @@ def delete(ctx, card_ids: tuple[str, ...]):
             return await client.delete_cards(list(card_ids))
 
     result = _run(_do())
-    if ctx.obj.get("json"):
+    if ctx.obj["format"] == "json":
         click.echo(json.dumps(result, indent=2))
     else:
         for cid, status in result.items():
@@ -154,7 +267,7 @@ def remove(ctx, card_ids: tuple[str, ...]):
             return await client.remove_cards(list(card_ids))
 
     result = _run(_do())
-    if ctx.obj.get("json"):
+    if ctx.obj["format"] == "json":
         click.echo(json.dumps(result, indent=2))
     else:
         for cid, status in result.items():

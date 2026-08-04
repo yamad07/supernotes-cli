@@ -4,7 +4,7 @@ from typing import Any
 
 import httpx
 
-from supernotes_cli.models import CardData, CardMembership, CardResponse
+from supernotes_cli.models import CardData, CardMembership, CardResponse, CollectionResponse
 
 BASE_URL = "https://api.supernotes.app"
 
@@ -87,6 +87,12 @@ class SupernotesClient:
         result = resp.json()
         return [self._parse_card(v) for v in result.values()]
 
+    async def get_collections(self) -> list[CollectionResponse]:
+        """Get all collections owned by the user."""
+        resp = await self._client.get("/v1/collections")
+        resp.raise_for_status()
+        return [CollectionResponse(**c) for c in resp.json()]
+
     async def create_card(
         self,
         name: str,
@@ -137,6 +143,55 @@ class SupernotesClient:
         resp = await self._client.patch("/v1/cards", json={card_id: {"data": patch}})
         resp.raise_for_status()
         return self._extract_card_from_multi_status(resp.json(), card_id)
+
+    async def move_card(
+        self,
+        card_id: str,
+        new_parent_id: str,
+        old_parent_id: str | None = None,
+    ) -> dict:
+        """Move a card to a new parent, optionally removing the old parent."""
+        parents: dict[str, Any] = {new_parent_id: {}}
+        if old_parent_id:
+            parents[old_parent_id] = {"cutting": True}
+
+        resp = await self._client.patch(
+            "/v1/cards", json={card_id: {"parents": parents}}
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def set_visibility(self, card_id: str, visibility: int) -> dict:
+        """Set card visibility. 1=priority, 0=visible, -1=invisible."""
+        resp = await self._client.patch(
+            "/v1/cards",
+            json={card_id: {"membership": {"visibility": visibility}}},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def daily_append(
+        self,
+        markup: str,
+        format: str | None = None,
+        local_date: str | None = None,
+        tags: list[str] | None = None,
+        parent_id: str | None = None,
+    ) -> CardResponse:
+        """Append markup to the daily card (created automatically if missing)."""
+        body: dict[str, Any] = {"markup": markup}
+        if format:
+            body["format"] = format
+        if local_date:
+            body["local_date"] = local_date
+        if tags:
+            body["tags"] = tags
+        if parent_id:
+            body["parent_id"] = parent_id
+
+        resp = await self._client.put("/v1/cards/daily", json=body)
+        resp.raise_for_status()
+        return self._extract_card_from_multi_status(resp.json())
 
     async def append_to_card(self, card_id: str, content: str) -> CardResponse:
         resp = await self._client.put(

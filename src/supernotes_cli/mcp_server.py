@@ -50,6 +50,16 @@ async def supernotes_search_cards(
 
 
 @mcp.tool()
+async def supernotes_get_collections() -> str:
+    """List all Supernotes collections owned by the user, with their IDs, names, and filters."""
+    async with _client() as client:
+        items = await client.get_collections()
+        if not items:
+            return "No collections found."
+        return "\n---\n".join(c.format_text() for c in items)
+
+
+@mcp.tool()
 async def supernotes_create_card(
     name: str,
     markup: str = "",
